@@ -153,5 +153,14 @@ The API container will bind to port `5000` with volume persistence for `Uploaded
 
 ---
 
+## Academic Documentation & Deliverables
+
+The formal academic Portfolio of Evidence document is available inside the [`docs/`](docs/) directory:
+- 📄 **Word Document:** [`docs/PROG7312_PoE_Part2_Documentation_ST10264431.docx`](docs/PROG7312_PoE_Part2_Documentation_ST10264431.docx)
+- 🖼️ **UI Dashboard Architecture:** [`docs/dashboard_screenshot.png`](docs/dashboard_screenshot.png)
+- 🐍 **Documentation Generator:** [`docs/generate_documentation.py`](docs/generate_documentation.py)
+
+---
+
 ## Git Commit History Notice
 The repository has been maintained with structured, descriptive commit messages adhering to standard conventional commit specifications, exceeding the requirement of 20+ commits.
