@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using SmartX.API.DataStructures;
 using SmartX.API.Models;
 using SmartX.API.Services;
 
@@ -12,6 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Register Core Advanced Data Structure Services (Singletons for in-memory live state)
 builder.Services.AddSingleton<IDeviceStateService, DeviceStateService>();
 builder.Services.AddSingleton<IPredictiveEngineService, PredictiveEngineService>();
+builder.Services.AddSingleton<IMeshTopologyService, MeshTopologyService>(); // Part 3: Graph, Trees, MST, Traversal
 
 // Add services to the container
 builder.Services.AddEndpointsApiExplorer();
@@ -19,9 +21,9 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new()
     {
-        Title = "SmartX-IoT-Mesh Gateway API (Part 2)",
-        Version = "v2",
-        Description = "Real-Time Processing Engine & Advanced Data Structure Gateway (Queues, Stacks, Priority Queues, Dictionaries, Sets)"
+        Title = "SmartX-IoT-Mesh Gateway API (PoE Final)",
+        Version = "v3",
+        Description = "Industrial Edge Gateway API featuring Advanced Data Structures (AVL Trees, Graphs, BFS/DFS Traversal, Prim's/Kruskal's MST, Priority Queues, Stacks, Dictionaries, Sets)"
     });
 });
 
@@ -43,7 +45,7 @@ app.UseCors();
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "SmartX API v2");
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "SmartX API v3");
     c.RoutePrefix = "swagger";
 });
 
@@ -51,8 +53,8 @@ app.UseSwaggerUI(c =>
 // PILLAR 1: SENSOR DATA INGESTION & TELEMETRY
 // ==================================================================
 
-// POST /api/telemetry: Ingests packet via FIFO queue or Priority Queue
-app.MapPost("/api/telemetry", (TelemetryPacket<double> packet, IDeviceStateService deviceService) =>
+// POST /api/telemetry: Ingests packet via FIFO queue or Priority Queue + records to AVL Tree
+app.MapPost("/api/telemetry", (TelemetryPacket<double> packet, IDeviceStateService deviceService, IMeshTopologyService topologyService) =>
 {
     if (packet == null)
     {
@@ -61,6 +63,18 @@ app.MapPost("/api/telemetry", (TelemetryPacket<double> packet, IDeviceStateServi
 
     // Ingest into Advanced Data Structures (FIFO Queue or Priority Alert Queue bypass)
     TelemetryResponse response = deviceService.EnqueueTelemetry(packet);
+
+    // Also record into AVL Tree for chronological range querying
+    topologyService.RecordTelemetry(new TelemetryRecord(
+        packet.MacAddress,
+        packet.Location,
+        packet.Category,
+        packet.Timestamp,
+        packet.PayloadValue,
+        packet.Category == "Power" ? "W" : packet.Category == "Hydroponics" ? "%" : "°C",
+        response.VisualState
+    ));
+
     return Results.Ok(response);
 })
 .WithName("SubmitTelemetry");
@@ -104,7 +118,7 @@ app.MapPost("/api/sensors/{mac}/upload-log", async (string mac, IFormFile file, 
 .DisableAntiforgery();
 
 // ==================================================================
-// PILLAR 2: REAL-TIME COMMAND STREAM & HISTORY (PART 2 CORE)
+// PILLAR 2: REAL-TIME COMMAND STREAM & HISTORY
 // ==================================================================
 
 // GET /api/devices: Fetch live registered devices from Dictionary<string, LiveDevice> with search/filter
@@ -180,14 +194,14 @@ app.MapGet("/api/commands/history", (IDeviceStateService deviceService) =>
 })
 .WithName("GetCommandHistory");
 
-// GET /api/telemetry/queue-status: Real-time status of all 5 data structures
+// GET /api/telemetry/queue-status: Real-time status of all data structures
 app.MapGet("/api/telemetry/queue-status", (IDeviceStateService deviceService) =>
 {
     return Results.Ok(deviceService.GetQueueStatus());
 })
 .WithName("GetQueueStatus");
 
-// POST /api/telemetry/simulate-alert: Lecturer testing endpoint for Priority Queue Bypass
+// POST /api/telemetry/simulate-alert: Priority Queue Bypass simulation
 app.MapPost("/api/telemetry/simulate-alert", (SimulateAlertRequest req, IDeviceStateService deviceService) =>
 {
     deviceService.SimulateHighPriorityAlert(
@@ -228,6 +242,147 @@ app.MapPost("/api/errors/resolve", (ResolveErrorRequest req, IDeviceStateService
     return Results.Ok(new { Success = removed, ErrorKey = req.ErrorKey });
 })
 .WithName("ResolveError");
+
+// ==================================================================
+// PILLAR 3: NETWORK TOPOLOGY & MESH ROUTING ENGINE (POE PART 3)
+// ==================================================================
+
+// GET /api/topology/graph: Full mesh network topology graph (Vertices, Edges, Weights, Statuses)
+app.MapGet("/api/topology/graph", (IMeshTopologyService topologyService) =>
+{
+    var graph = topologyService.GetGraph();
+    return Results.Ok(new
+    {
+        VertexCount = graph.VertexCount,
+        EdgeCount = graph.EdgeCount,
+        GatewayRootId = topologyService.GatewayRootId,
+        Vertices = graph.Vertices.Values.ToList(),
+        Edges = graph.Edges.ToList()
+    });
+})
+.WithName("GetTopologyGraph");
+
+// GET /api/topology/mst: Compute Minimum Spanning Tree (Prim's Min-Heap or Kruskal's DSU)
+app.MapGet("/api/topology/mst", (bool? kruskal, IMeshTopologyService topologyService) =>
+{
+    var result = topologyService.CalculateMst(kruskal ?? false);
+    return Results.Ok(result);
+})
+.WithName("GetMinimumSpanningTree");
+
+// GET /api/topology/traversal: Graph Traversal (BFS / DFS)
+app.MapGet("/api/topology/traversal", (string? algorithm, string? startNode, IMeshTopologyService topologyService) =>
+{
+    var result = topologyService.RunTraversal(algorithm ?? "BFS", startNode);
+    return Results.Ok(result);
+})
+.WithName("RunGraphTraversal");
+
+// GET /api/topology/route/{id}: Shortest hop-by-hop path from sensor node to gateway
+app.MapGet("/api/topology/route/{id}", (string id, IMeshTopologyService topologyService) =>
+{
+    var path = topologyService.GetRoutingPath(id);
+    return Results.Ok(new
+    {
+        NodeId = id,
+        Gateway = topologyService.GatewayRootId,
+        HopCount = Math.Max(0, path.Count - 1),
+        RoutePath = path
+    });
+})
+.WithName("GetRoutingPath");
+
+// POST /api/topology/toggle-outage: Simulates node failure / self-healing network restoration
+app.MapPost("/api/topology/toggle-outage", (ToggleOutageRequest req, IMeshTopologyService topologyService) =>
+{
+    if (string.IsNullOrWhiteSpace(req.NodeId))
+    {
+        return Results.BadRequest(new { Message = "NodeId is required." });
+    }
+
+    bool success = topologyService.ToggleNodeStatus(req.NodeId, out bool newStatus, out string message);
+    if (!success)
+    {
+        return Results.NotFound(new { Message = message });
+    }
+
+    // Recompute MST and routes after state change to show dynamic self-healing
+    var updatedMst = topologyService.CalculateMst();
+    return Results.Ok(new
+    {
+        Success = true,
+        NodeId = req.NodeId,
+        IsOnline = newStatus,
+        Message = message,
+        UpdatedMst = updatedMst
+    });
+})
+.WithName("ToggleNodeOutage");
+
+// GET /api/history/query-range: Fast AVL Tree range query O(log n + k)
+app.MapGet("/api/history/query-range", (string mac, DateTime? start, DateTime? end, IMeshTopologyService topologyService) =>
+{
+    if (string.IsNullOrWhiteSpace(mac))
+    {
+        return Results.BadRequest(new { Message = "MAC Address is required." });
+    }
+
+    DateTime startTime = start ?? DateTime.UtcNow.AddHours(-12);
+    DateTime endTime = end ?? DateTime.UtcNow.AddMinutes(5);
+
+    var records = topologyService.QueryHistoricalRange(mac, startTime, endTime, out int evaluated, out int height);
+
+    return Results.Ok(new
+    {
+        MacAddress = mac,
+        StartTime = startTime,
+        EndTime = endTime,
+        RecordCount = records.Count,
+        NodesEvaluated = evaluated,
+        AvlTreeHeight = height,
+        Algorithm = "AVL Tree Range Search (O(log n + k))",
+        Records = records
+    });
+})
+.WithName("QueryHistoricalRange");
+
+// GET /api/history/all: Get all history for sensor
+app.MapGet("/api/history/all", (string mac, IMeshTopologyService topologyService) =>
+{
+    var records = topologyService.GetAllHistory(mac);
+    return Results.Ok(new
+    {
+        MacAddress = mac,
+        TotalCount = records.Count,
+        Records = records
+    });
+})
+.WithName("GetAllHistoricalRecords");
+
+// POST /api/history/record: Append telemetry to AVL Tree
+app.MapPost("/api/history/record", (RecordTelemetryRequest req, IMeshTopologyService topologyService) =>
+{
+    var record = new TelemetryRecord(
+        req.MacAddress,
+        req.DeviceName ?? "Edge Sensor",
+        req.Category ?? "Environmental",
+        req.Timestamp ?? DateTime.UtcNow,
+        req.Value,
+        req.Unit ?? "%",
+        req.Status ?? "NORMAL"
+    );
+
+    topologyService.RecordTelemetry(record);
+    return Results.Ok(new { Status = "SUCCESS", Record = record });
+})
+.WithName("RecordHistoricalTelemetry");
+
+// GET /api/history/stats: Summary count of AVL Tree records per node
+app.MapGet("/api/history/stats", (IMeshTopologyService topologyService) =>
+{
+    return Results.Ok(topologyService.GetHistoryStats());
+})
+.WithName("GetHistoryStats");
 
 // ==================================================================
 // PREDICTIVE ACTION & RECOMMENDATION ENGINE
@@ -273,3 +428,5 @@ app.Run();
 public record SimulateAlertRequest(string? MacAddress, string? AlertType, double Value, string? Message);
 public record ResolveErrorRequest(string ErrorKey);
 public record RecordSearchRequest(string? SearchTerm, string? Category, string? AlertState);
+public record ToggleOutageRequest(string NodeId);
+public record RecordTelemetryRequest(string MacAddress, string? DeviceName, string? Category, DateTime? Timestamp, double Value, string? Unit, string? Status);
